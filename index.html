@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>휘매쓰 DB</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      background-color: #4CAF50;
+      color: white;
+      text-align: center;
+      padding: 1em 0;
+    }
+    main {
+      padding: 20px;
+    }
+    .filter-section {
+      margin: 20px 0;
+      text-align: center;
+    }
+    .filter-section input {
+      padding: 5px;
+      margin-left: 5px;
+    }
+    #game-details {
+      margin-top: 20px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table th, table td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
+    }
+    /* 점수 열 너비 설정 */
+    table th:nth-child(3),
+    table td:nth-child(3) {
+      width: 90px; /* 점수 열 너비 60% 수준으로 감소 */
+    }
+    table th {
+      background-color: #f2f2f2;
+    }
+    .export-button {
+      margin-top: 20px;
+      text-align: center;
+    }
+    .export-button button {
+      padding: 10px 20px;
+      background-color: #007BFF;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .export-button button:hover {
+      background-color: #0056b3;
+    }
+    .export-button img {
+      width: 16px;
+      height: 16px;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .delete-btn {
+      background-color: #ff4d4d;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .delete-btn:hover {
+      background-color: #ff0000;
+    }
+    /* 삭제 확인 모달 스타일 */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+      background-color: #fefefe;
+      margin: 15% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 300px;
+      border-radius: 5px;
+      text-align: center;
+    }
+    .modal-buttons {
+      margin-top: 20px;
+    }
+    .modal-buttons button {
+      padding: 8px 16px;
+      margin: 0 5px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .confirm-delete {
+      background-color: #ff4d4d;
+      color: white;
+    }
+    .cancel-delete {
+      background-color: #ccc;
+    }
+  </style>
+  <!-- xlsx, FileSaver.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/1.3.8/FileSaver.min.js"></script>
+  
+  <script defer>
+    let gameData = [];
+    let userData = [];
+    let selectedGame = '';
+    let selectedUser = '';
+    let recordToDelete = null; // 삭제할 레코드 저장용 변수
+
+    // 정렬용 전역 변수
+    let sortKey = '';
+    let sortDirection = 'desc'; // 기본 내림차순
+
+    // ✅ API로 게임 데이터 가져오기
+    async function fetchGameData(page = 1, pageSize = 1000000) {
+      try {
+        const response = await fetch(`https://us-central1-record-f420d.cloudfunctions.net/getGameData?page=${page}&pageSize=${pageSize}`);
+        const result = await response.json();
+        console.log('게임 API 응답:', result);
+
+        if (result.data && Array.isArray(result.data)) {
+          gameData = result.data;
+          removeDuplicates();
+          renderGameDatalist();
+          renderFilteredDetails();
+        } else {
+          console.warn('예상치 못한 게임 데이터 형식 반환:', result);
+        }
+      } catch (error) {
+        console.error('게임 API 호출 오류:', error);
+      }
+    }
+
+    // ✅ 중복 데이터 제거
+    function removeDuplicates() {
+      const uniqueData = [];
+      const seen = new Set();
+
+      for (let i = gameData.length - 1; i >= 0; i--) {
+        const { name, score, elapsedTime } = gameData[i];
+        const identifier = `${name}-${score}-${elapsedTime}`;
+        if (!seen.has(identifier)) {
+          seen.add(identifier);
+          uniqueData.unshift(gameData[i]);
+        }
+      }
+
+      gameData = uniqueData;
+    }
+
+    // ✅ API로 사용자 데이터 가져오기
+    async function fetchUserData(page = 1, pageSize = 1000000) {
+      try {
+        const response = await fetch(`https://us-central1-record-f420d.cloudfunctions.net/getUserData?page=${page}&pageSize=${pageSize}`);
+        const result = await response.json();
+        console.log('사용자 API 응답:', result);
+
+        if (result.data && Array.isArray(result.data)) {
+          userData = result.data;
+          renderUserDatalist();
+          renderFilteredDetails();
+        } else {
+          console.warn('예상치 못한 사용자 데이터 형식 반환:', result);
+        }
+      } catch (error) {
+        console.error('사용자 API 호출 오류:', error);
+      }
+    }
+
+    // ✅ 게임 datalist 렌더링
+    function renderGameDatalist() {
+      const datalist = document.getElementById('game-list');
+      // 고유 게임명 추출
+      let uniqueGames = Array.from(new Set(gameData.map(item => item.game)));
+      // 사용자가 선택된 경우 사전식 정렬
+      if (selectedUser) {
+        uniqueGames.sort();
+      }
+      datalist.innerHTML = '';
+      uniqueGames.forEach(game => {
+        const option = document.createElement('option');
+        option.value = game;
+        datalist.appendChild(option);
+      });
+    }
+
+    // ✅ 사용자 datalist 렌더링
+    function renderUserDatalist() {
+      const datalist = document.getElementById('user-list');
+      let uniqueUsers = Array.from(new Set(userData.map(item => item.name)));
+      uniqueUsers.sort(); // 항상 사전식 정렬
+      datalist.innerHTML = '';
+      uniqueUsers.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        datalist.appendChild(option);
+      });
+    }
+
+    // ✅ 게임 선택 입력 핸들러
+    function handleGameInput() {
+      selectedGame = document.getElementById('game-input').value;
+      // 게임 선택 시 사용자 선택 초기화
+      selectedUser = '';
+      document.getElementById('user-input').value = '';
+      renderFilteredDetails();
+    }
+
+    // ✅ 사용자 선택 입력 핸들러
+    function handleUserInput() {
+      selectedUser = document.getElementById('user-input').value;
+      // 사용자 선택 시 게임 선택 초기화
+      selectedGame = '';
+      document.getElementById('game-input').value = '';
+      renderFilteredDetails();
+      // 사용자 선택에 따라 게임 목록은 사전식 정렬
+      renderGameDatalist();
+    }
+
+    // ✅ 내림차순 정렬 버튼 클릭 시 호출되는 함수
+    function sortData(key, direction = 'desc') {
+      sortKey = key;
+      sortDirection = direction;
+      renderFilteredDetails();  // 정렬 후 다시 렌더링
+    }
+
+    // ✅ 삭제 버튼 클릭 시 호출되는 함수
+    function showDeleteConfirmation(game, name, timestamp) {
+      // 삭제할 레코드 정보 저장
+      recordToDelete = { game, name, timestamp };
+      
+      // 모달 표시
+      document.getElementById('deleteModal').style.display = 'block';
+    }
+
+    // ✅ 삭제 확인 시 호출되는 함수
+    async function confirmDelete() {
+      if (!recordToDelete) return;
+      
+      try {
+        // DELETE 요청 생성
+        const { game, name, timestamp } = recordToDelete;
+        const response = await fetch(
+          `https://us-central1-record-f420d.cloudfunctions.net/deleteData?game=${encodeURIComponent(game)}&name=${encodeURIComponent(name)}&timestamp=${timestamp}`,
+          { method: 'DELETE' }
+        );
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          // 성공적으로 삭제된 경우 데이터 다시 불러오기
+          alert('데이터가 성공적으로 삭제되었습니다.');
+          await fetchGameData();
+          await fetchUserData();
+        } else {
+          alert(`삭제 실패: ${result.message}`);
+        }
+      } catch (error) {
+        console.error('데이터 삭제 중 오류:', error);
+        alert('데이터 삭제 중 오류가 발생했습니다.');
+      } finally {
+        // 모달 숨기기 및 삭제 레코드 정보 초기화
+        closeDeleteModal();
+      }
+    }
+
+    // ✅ 삭제 취소 시 호출되는 함수
+    function closeDeleteModal() {
+      document.getElementById('deleteModal').style.display = 'none';
+      recordToDelete = null;
+    }
+
+    // ✅ 통합 필터링 및 렌더링 함수
+    function renderFilteredDetails() {
+      let filteredData = gameData;
+
+      if (selectedGame) {
+        filteredData = filteredData.filter(item => item.game === selectedGame);
+      }
+      if (selectedUser) {
+        filteredData = filteredData.filter(item => item.name === selectedUser);
+      }
+
+      // 정렬 로직
+      if (sortKey) {
+        filteredData.sort((a, b) => {
+          let aVal, bVal;
+
+          switch (sortKey) {
+            case 'game':
+              aVal = a.game;
+              bVal = b.game;
+              break;
+            case 'name':
+              aVal = a.name;
+              bVal = b.name;
+              break;
+            case 'timePerProblem':
+              const aTime = (Number(a.elapsedTime) / Number(a.score)) * 10 || 0;
+              const bTime = (Number(b.elapsedTime) / Number(b.score)) * 10 || 0;
+              aVal = aTime;
+              bVal = bTime;
+              break;
+            case 'timestamp':
+              aVal = a.timestamp;
+              bVal = b.timestamp;
+              break;
+            default:
+              aVal = a[sortKey];
+              bVal = b[sortKey];
+              break;
+          }
+
+          // 내림차순 정렬
+          if (sortDirection === 'desc') {
+            if (aVal > bVal) return -1;
+            if (aVal < bVal) return 1;
+            return 0;
+          } else {
+            // 혹시 다른 방향 정렬을 추가할 경우 대비(asc 등)
+            if (aVal < bVal) return -1;
+            if (aVal > bVal) return 1;
+            return 0;
+          }
+        });
+      }
+
+      const tbody = document.getElementById('data-body');
+      tbody.innerHTML = '';
+
+      filteredData.forEach((item) => {
+        // 문제당 소요시간 계산: (경과시간 ÷ 점수) × 10
+        let timePerProblem = 0;
+        if (item.score && item.score !== 0) {
+          timePerProblem = (Number(item.elapsedTime) / Number(item.score)) * 10;
+        }
+
+        const tr = document.createElement('tr');
+
+        // 게임 셀
+        const gameTd = document.createElement('td');
+        gameTd.innerHTML = `<a href="#" onclick="goToGame('${item.game}')">${item.game}</a>`;
+
+        // 이름 셀
+        const nameTd = document.createElement('td');
+        nameTd.innerHTML = `<a href="#" onclick="goToUser('${item.name}')">${item.name}</a>`;
+
+        // 점수
+        const scoreTd = document.createElement('td');
+        const scoreText = item.maxScore ? `${item.score}/${item.maxScore}` : `${item.score}`;
+        scoreTd.textContent = scoreText;
+
+        // 경과시간
+        const elapsedTimeTd = document.createElement('td');
+        elapsedTimeTd.textContent = item.elapsedTime;
+
+        // 문제당 소요시간
+        const timePerProblemTd = document.createElement('td');
+        timePerProblemTd.textContent = timePerProblem.toFixed(2);
+
+        // Timestamp
+        const timestampTd = document.createElement('td');
+        timestampTd.textContent = new Date(item.timestamp).toLocaleString();
+
+        // 삭제 버튼
+        const deleteTd = document.createElement('td');
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'X';
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.onclick = function() {
+          showDeleteConfirmation(item.game, item.name, item.timestamp);
+        };
+        deleteTd.appendChild(deleteBtn);
+
+        tr.appendChild(gameTd);
+        tr.appendChild(nameTd);
+        tr.appendChild(scoreTd);
+        tr.appendChild(elapsedTimeTd);
+        tr.appendChild(timePerProblemTd);
+        tr.appendChild(timestampTd);
+        tr.appendChild(deleteTd); // 삭제 버튼 셀 추가
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ✅ 게임/이름 클릭 시 필터링 함수
+    function goToGame(game) {
+      selectedGame = game;
+      document.getElementById('game-input').value = game;
+      selectedUser = '';
+      document.getElementById('user-input').value = '';
+      renderFilteredDetails();
+    }
+
+    function goToUser(name) {
+      selectedUser = name;
+      document.getElementById('user-input').value = name;
+      selectedGame = '';
+      document.getElementById('game-input').value = '';
+      renderFilteredDetails();
+    }
+
+    // ✅ 엑셀로 내보내기
+    function exportToExcel() {
+      if (!XLSX) {
+        console.error('XLSX 라이브러리가 로드되지 않았습니다.');
+        return;
+      }
+
+      // 현재 필터링된 데이터 가져오기
+      let filteredData = gameData;
+      if (selectedGame) {
+        filteredData = filteredData.filter(item => item.game === selectedGame);
+      }
+      if (selectedUser) {
+        filteredData = filteredData.filter(item => item.name === selectedUser);
+      }
+
+      // 엑셀로 내보낼 데이터 구성
+      const exportData = filteredData.map(item => {
+        let timePerProblem = 0;
+        if (item.score && item.score !== 0) {
+          timePerProblem = (Number(item.elapsedTime) / Number(item.score)) * 10;
+        }
+
+        return {
+          "게임": item.game,
+          "이름": item.name,
+          "점수": item.maxScore ? `${item.score}/${item.maxScore}` : `${item.score}`,
+          "경과시간": item.elapsedTime,
+          "문제당 소요시간": timePerProblem.toFixed(2),
+          "Timestamp": new Date(item.timestamp).toLocaleString()
+        };
+      });
+
+      // 데이터 시트 생성
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Filtered Data");
+
+      // 파일 이름을 "휘매쓰 연산 챌린지.xlsx" 로 고정
+      const fileName = "휘매쓰 연산 챌린지.xlsx";
+      XLSX.writeFile(workbook, fileName);
+    }
+
+    // 페이지가 로드될 때 API 데이터 가져오기
+    window.onload = () => {
+      fetchGameData();
+      fetchUserData();
+    };
+  </script>
+</head>
+<body>
+  <header>
+    <h1>🎮 게임 및 사용자 데이터 대시보드</h1>
+  </header>
+  <main>
+    <section class="filter-section">
+      <!-- 게임 선택 입력란과 datalist -->
+      <label for="game-input">게임 선택:</label>
+      <input type="text" id="game-input" list="game-list" oninput="handleGameInput()">
+      <datalist id="game-list"></datalist>
+
+      <!-- 사용자 선택 입력란과 datalist -->
+      <label for="user-input">사용자 선택:</label>
+      <input type="text" id="user-input" list="user-list" oninput="handleUserInput()">
+      <datalist id="user-list"></datalist>
+    </section>
+
+    <section class="export-button">
+      <button onclick="exportToExcel()">
+        <img src="https://cdn-icons-png.flaticon.com/512/732/732220.png" alt="Excel Icon"> 엑셀로 내보내기
+      </button>
+    </section>
+
+    <section id="game-details">
+      <h2>데이터 상세 정보</h2>
+      <table>
+        <thead>
+          <tr>
+            <!-- 내림차순 정렬 버튼 추가 (▼) -->
+            <th>
+              게임 
+              <button onclick="sortData('game', 'desc')">▼</button>
+            </th>
+            <th>
+              이름 
+              <button onclick="sortData('name', 'desc')">▼</button>
+            </th>
+            <th>점수</th>
+            <th>경과시간</th>
+            <th>
+              문제당 소요시간 
+              <button onclick="sortData('timePerProblem', 'desc')">▼</button>
+            </th>
+            <th>
+              Timestamp 
+              <button onclick="sortData('timestamp', 'desc')">▼</button>
+            </th>
+            <th>삭제</th> <!-- 삭제 열 추가 -->
+          </tr>
+        </thead>
+        <tbody id="data-body"></tbody>
+      </table>
+    </section>
+  </main>
+  <footer>
+    <p>© 2024 게임 및 사용자 데이터 대시보드</p>
+  </footer>
+
+  <!-- 삭제 확인 모달 -->
+  <div id="deleteModal" class="modal">
+    <div class="modal-content">
+      <h3>데이터 삭제</h3>
+      <p>정말로 이 데이터를 삭제하시겠습니까?</p>
+      <p>이 작업은 되돌릴 수 없습니다.</p>
+      <div class="modal-buttons">
+        <button class="confirm-delete" onclick="confirmDelete()">삭제</button>
+        <button class="cancel-delete" onclick="closeDeleteModal()">취소</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
