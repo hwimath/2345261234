@@ -43,7 +43,7 @@
     /* 점수 열 너비 설정 */
     table th:nth-child(3),
     table td:nth-child(3) {
-      width: 90px; /* 점수 열 너비 60% 수준으로 감소 */
+      width: 90px;
     }
     table th {
       background-color: #f2f2f2;
@@ -129,6 +129,11 @@
     let userData = [];
     let selectedGame = '';
     let selectedUser = '';
+    
+    // 날짜 범위 필터용
+    let selectedStartDate = '';  // 시작 날짜
+    let selectedEndDate = '';    // 종료 날짜
+
     let recordToDelete = null; // 삭제할 레코드 저장용 변수
 
     // 정렬용 전역 변수
@@ -241,6 +246,13 @@
       renderGameDatalist();
     }
 
+    // ✅ 날짜 범위 선택 핸들러
+    function handleDateRange() {
+      selectedStartDate = document.getElementById('start-date').value;
+      selectedEndDate = document.getElementById('end-date').value;
+      renderFilteredDetails();
+    }
+
     // ✅ 내림차순 정렬 버튼 클릭 시 호출되는 함수
     function sortData(key, direction = 'desc') {
       sortKey = key;
@@ -298,11 +310,20 @@
     function renderFilteredDetails() {
       let filteredData = gameData;
 
+      // 게임, 사용자 선택 필터
       if (selectedGame) {
         filteredData = filteredData.filter(item => item.game === selectedGame);
       }
       if (selectedUser) {
         filteredData = filteredData.filter(item => item.name === selectedUser);
+      }
+
+      // 날짜 범위 필터
+      if (selectedStartDate) {
+        filteredData = filteredData.filter(item => new Date(item.timestamp) >= new Date(selectedStartDate));
+      }
+      if (selectedEndDate) {
+        filteredData = filteredData.filter(item => new Date(item.timestamp) <= new Date(selectedEndDate));
       }
 
       // 정렬 로직
@@ -341,7 +362,7 @@
             if (aVal < bVal) return 1;
             return 0;
           } else {
-            // 혹시 다른 방향 정렬을 추가할 경우 대비(asc 등)
+            // 혹시 다른 방향 정렬(asc 등)을 추가할 경우 대비
             if (aVal < bVal) return -1;
             if (aVal > bVal) return 1;
             return 0;
@@ -349,29 +370,34 @@
         });
       }
 
+      // 테이블 본문에 데이터 렌더링
       const tbody = document.getElementById('data-body');
       tbody.innerHTML = '';
 
       filteredData.forEach((item) => {
         // 문제당 소요시간 계산: (경과시간 ÷ 점수) × 10
         let timePerProblem = 0;
-        if (item.score && item.score !== 0) {
+        if (item.score && Number(item.score) !== 0) {
           timePerProblem = (Number(item.elapsedTime) / Number(item.score)) * 10;
         }
 
+        // 점수: maxScore가 존재하면 "score/maxScore", 아니면 "score"만 표시
+        const scoreText = item.maxScore
+          ? `${item.score}/${item.maxScore}`
+          : String(item.score);
+
         const tr = document.createElement('tr');
 
-        // 게임 셀
+        // 게임
         const gameTd = document.createElement('td');
         gameTd.innerHTML = `<a href="#" onclick="goToGame('${item.game}')">${item.game}</a>`;
 
-        // 이름 셀
+        // 이름
         const nameTd = document.createElement('td');
         nameTd.innerHTML = `<a href="#" onclick="goToUser('${item.name}')">${item.name}</a>`;
 
         // 점수
         const scoreTd = document.createElement('td');
-        const scoreText = item.maxScore ? `${item.score}/${item.maxScore}` : `${item.score}`;
         scoreTd.textContent = scoreText;
 
         // 경과시간
@@ -402,7 +428,7 @@
         tr.appendChild(elapsedTimeTd);
         tr.appendChild(timePerProblemTd);
         tr.appendChild(timestampTd);
-        tr.appendChild(deleteTd); // 삭제 버튼 셀 추가
+        tr.appendChild(deleteTd);
 
         tbody.appendChild(tr);
       });
@@ -434,6 +460,8 @@
 
       // 현재 필터링된 데이터 가져오기
       let filteredData = gameData;
+
+      // 게임, 사용자 필터
       if (selectedGame) {
         filteredData = filteredData.filter(item => item.game === selectedGame);
       }
@@ -441,17 +469,28 @@
         filteredData = filteredData.filter(item => item.name === selectedUser);
       }
 
+      // 날짜 필터
+      if (selectedStartDate) {
+        filteredData = filteredData.filter(item => new Date(item.timestamp) >= new Date(selectedStartDate));
+      }
+      if (selectedEndDate) {
+        filteredData = filteredData.filter(item => new Date(item.timestamp) <= new Date(selectedEndDate));
+      }
+
       // 엑셀로 내보낼 데이터 구성
       const exportData = filteredData.map(item => {
         let timePerProblem = 0;
-        if (item.score && item.score !== 0) {
+        if (item.score && Number(item.score) !== 0) {
           timePerProblem = (Number(item.elapsedTime) / Number(item.score)) * 10;
         }
 
         return {
           "게임": item.game,
           "이름": item.name,
-          "점수": item.maxScore ? `${item.score}/${item.maxScore}` : `${item.score}`,
+          // 점수: maxScore가 있으면 "score/maxScore"
+          "점수": item.maxScore
+            ? `${item.score}/${item.maxScore}`
+            : String(item.score),
           "경과시간": item.elapsedTime,
           "문제당 소요시간": timePerProblem.toFixed(2),
           "Timestamp": new Date(item.timestamp).toLocaleString()
@@ -463,12 +502,12 @@
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Filtered Data");
 
-      // 파일 이름을 "휘매쓰 연산 챌린지.xlsx" 로 고정
+      // 파일 이름 고정
       const fileName = "휘매쓰 연산 챌린지.xlsx";
       XLSX.writeFile(workbook, fileName);
     }
 
-    // 페이지가 로드될 때 API 데이터 가져오기
+    // 페이지 로드 시 API 데이터 가져오기
     window.onload = () => {
       fetchGameData();
       fetchUserData();
@@ -490,6 +529,12 @@
       <label for="user-input">사용자 선택:</label>
       <input type="text" id="user-input" list="user-list" oninput="handleUserInput()">
       <datalist id="user-list"></datalist>
+
+      <!-- 날짜 범위 선택 (시작, 종료) -->
+      <label for="start-date">시작 날짜:</label>
+      <input type="date" id="start-date" onchange="handleDateRange()">
+      <label for="end-date">종료 날짜:</label>
+      <input type="date" id="end-date" onchange="handleDateRange()">
     </section>
 
     <section class="export-button">
@@ -503,7 +548,6 @@
       <table>
         <thead>
           <tr>
-            <!-- 내림차순 정렬 버튼 추가 (▼) -->
             <th>
               게임 
               <button onclick="sortData('game', 'desc')">▼</button>
